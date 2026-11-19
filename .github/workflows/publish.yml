@@ -11,12 +11,12 @@ on:
       dry_run:
         description: "true 이면 올리지 않고 대상만 출력"
         default: "true"
-  # 예약 실행은 토큰을 넣고 시험 발행을 마친 뒤에 켠다.
-  # schedule:
-  #   - cron: "2 0,3,6,9,12,15,18,21 * * *"    # 스레드 슬롯 (KST 09:00부터 3시간마다)
-  #   - cron: "32 1,4,7,10,13,16,19,22 * * *"  # 스레드 슬롯 (KST 10:30부터 3시간마다)
-  #   - cron: "12 3,10 * * *"                   # 인스타그램 (KST 12:12, 19:12)
-  #   - cron: "40 18 1,15 * *"                  # 토큰 갱신 (매달 1일, 15일)
+  # 예약 실행: 2026-11-20 켬(사용자 결정). 끄려면 이 블록을 주석으로 바꾸거나, 원고 저장소 맨 위에 PAUSE 파일을 둔다.
+  schedule:
+    - cron: "2 0,3,6,9,12,15,18,21 * * *"    # 스레드 슬롯 (KST 09:00부터 3시간마다)
+    - cron: "32 1,4,7,10,13,16,19,22 * * *"  # 스레드 슬롯 (KST 10:30부터 3시간마다)
+    - cron: "12 3,10 * * *"                   # 인스타그램 (KST 12:12, 19:12)
+    - cron: "40 18 1,15 * *"                  # 스레드 토큰 갱신 (매달 1일, 15일)
 
 permissions:
   contents: write
@@ -28,7 +28,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: 이 저장소 받기 (미디어 보관용)
         uses: actions/checkout@v4
@@ -72,8 +72,15 @@ jobs:
       - name: 인스타그램 준비 (캐러셀 제작)
         if: steps.plan.outputs.target == 'instagram'
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
-          pip install -q pillow numpy scipy
+          pip install -q pillow numpy scipy imageio-ffmpeg
+          if ! command -v ffmpeg > /dev/null; then   # apt 설치는 5분 넘게 걸려서 pip 로 받은 ffmpeg 를 먼저 쓴다
+            mkdir -p "$HOME/bin"
+            ln -sf "$(python3 -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" "$HOME/bin/ffmpeg" || true
+            export PATH="$HOME/bin:$PATH"
+            if ! ffmpeg -hide_banner -encoders 2> /dev/null | grep -q libx264; then
+              sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg > /dev/null
+            fi
+          fi
           bash sns/tools/setup_fonts.sh
           python3 sns/tools/publish.py ig-prepare pub/media ${{ steps.plan.outputs.dry }}
 
