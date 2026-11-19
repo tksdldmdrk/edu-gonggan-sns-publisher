@@ -1,0 +1,117 @@
+# 에듀공간 SNS 발행. 원고와 코드는 비공개 저장소(edu-gonggan-sns)에 있고, 여기서는 실행만 한다.
+# 토큰은 이 저장소의 Secrets 에만 둔다: SNS_REPO_TOKEN, THREADS_ACCESS_TOKEN, IG_ACCESS_TOKEN
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "threads | instagram | refresh"
+        default: "threads"
+      dry_run:
+        description: "true 이면 올리지 않고 대상만 출력"
+        default: "true"
+  # 예약 실행은 토큰을 넣고 시험 발행을 마친 뒤에 켠다.
+  # schedule:
+  #   - cron: "2 0,3,6,9,12,15,18,21 * * *"    # 스레드 슬롯 (KST 09:00부터 3시간마다)
+  #   - cron: "32 1,4,7,10,13,16,19,22 * * *"  # 스레드 슬롯 (KST 10:30부터 3시간마다)
+  #   - cron: "12 3,10 * * *"                   # 인스타그램 (KST 12:12, 19:12)
+  #   - cron: "40 18 1,15 * *"                  # 토큰 갱신 (매달 1일, 15일)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 이 저장소 받기 (미디어 보관용)
+        uses: actions/checkout@v4
+        with:
+          path: pub
+
+      - name: 원고·코드 저장소 받기
+        uses: actions/checkout@v4
+        with:
+          repository: tksdldmdrk/edu-gonggan-sns
+          token: ${{ secrets.SNS_REPO_TOKEN }}
+          path: sns
+
+      - name: 할 일 정하기
+        id: plan
+        env:
+          IN_TARGET: ${{ github.event.inputs.target }}
+          IN_DRY: ${{ github.event.inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+          CRON: ${{ github.event.schedule }}
+        run: |
+          T="$IN_TARGET"; D="$IN_DRY"
+          if [ "$EVENT" = "schedule" ]; then
+            D=false
+            case "$CRON" in
+              "12 3,10 * * *") T=instagram ;;
+              "40 18 1,15 * *") T=refresh ;;
+              *) T=threads ;;
+            esac
+          fi
+          echo "target=$T" >> "$GITHUB_OUTPUT"
+          if [ "$D" = "false" ]; then echo "dry=" >> "$GITHUB_OUTPUT"; else echo "dry=--dry-run" >> "$GITHUB_OUTPUT"; fi
+          echo "target=$T dry_run=$D"
+
+      - name: 스레드 발행
+        if: steps.plan.outputs.target == 'threads'
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+        run: python3 sns/tools/publish.py threads ${{ steps.plan.outputs.dry }}
+
+      - name: 인스타그램 준비 (캐러셀 제작)
+        if: steps.plan.outputs.target == 'instagram'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install -q pillow numpy scipy
+          bash sns/tools/setup_fonts.sh
+          python3 sns/tools/publish.py ig-prepare pub/media ${{ steps.plan.outputs.dry }}
+
+      - name: 미디어 올리기 (공개 주소 만들기)
+        if: steps.plan.outputs.target == 'instagram' && steps.plan.outputs.dry == ''
+        run: |
+          cd pub
+          [ -f media/pending.json ] || exit 0
+          git config user.name "edugonggan-publisher"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A media
+          git diff --cached --quiet || (git commit -q -m "media: $(date -u +%FT%RZ)" && git push -q)
+
+      - name: 인스타그램 발행
+        if: steps.plan.outputs.target == 'instagram'
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: python3 sns/tools/publish.py ig-publish pub/media "https://raw.githubusercontent.com/${{ github.repository }}/main/media" ${{ steps.plan.outputs.dry }}
+
+      - name: 토큰 갱신
+        if: steps.plan.outputs.target == 'refresh' && steps.plan.outputs.dry == ''
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.SNS_REPO_TOKEN }}
+        run: |
+          python3 sns/tools/publish.py refresh "$RUNNER_TEMP/tok"
+          for n in THREADS_ACCESS_TOKEN IG_ACCESS_TOKEN; do
+            if [ -s "$RUNNER_TEMP/tok/$n" ]; then gh secret set "$n" --repo "${{ github.repository }}" < "$RUNNER_TEMP/tok/$n"; fi
+          done
+          rm -rf "$RUNNER_TEMP/tok"
+
+      - name: 발행 기록 저장
+        if: always() && steps.plan.outputs.dry == ''
+        run: |
+          cd sns
+          [ -d published ] || exit 0
+          git config user.name "edugonggan-publisher"
+          git config user.email "actions@users.noreply.github.com"
+          git add published
+          git diff --cached --quiet || (git commit -q -m "published: $(date -u +%FT%RZ)" && git pull -q --rebase && git push -q)
