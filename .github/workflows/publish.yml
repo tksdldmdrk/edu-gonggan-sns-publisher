@@ -68,6 +68,12 @@ jobs:
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
         run: python3 sns/tools/publish.py threads ${{ steps.plan.outputs.dry }}
 
+      - name: 출처 원문 받아 두기 (Claude 가 대조할 때 읽는다)
+        if: always() && steps.plan.outputs.target == 'threads' && steps.plan.outputs.dry == ''
+        continue-on-error: true
+        timeout-minutes: 6
+        run: python3 sns/tools/fetch_sources.py
+
       - name: 인스타그램 준비 (캐러셀 제작)
         if: steps.plan.outputs.target == 'instagram'
         run: |
@@ -112,12 +118,12 @@ jobs:
           done
           rm -rf "$RUNNER_TEMP/tok"
 
-      - name: 발행 기록 저장
+      - name: 발행 기록·출처 원문 저장
         if: always() && steps.plan.outputs.dry == ''
         run: |
           cd sns
-          [ -d published ] || exit 0
           git config user.name "edugonggan-publisher"
           git config user.email "actions@users.noreply.github.com"
-          git add published
-          git diff --cached --quiet || (git commit -q -m "published: $(date -u +%FT%RZ)" && git pull -q --rebase && git push -q)
+          [ -d published ] && git add -A published
+          if [ -d sources ] || git ls-files --error-unmatch sources > /dev/null 2>&1; then git add -A sources || true; fi
+          git diff --cached --quiet || (git commit -q -m "기록: $(date -u +%FT%RZ)" && git pull -q --rebase && git push -q)
