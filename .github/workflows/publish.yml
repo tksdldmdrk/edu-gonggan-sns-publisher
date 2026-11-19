@@ -13,8 +13,7 @@ on:
         default: "true"
   # 예약 실행: 2026-11-20 켬(사용자 결정). 끄려면 이 블록을 주석으로 바꾸거나, 원고 저장소 맨 위에 PAUSE 파일을 둔다.
   schedule:
-    - cron: "2 0,3,6,9,12,15,18,21 * * *"    # 스레드 슬롯 (KST 09:00부터 3시간마다)
-    - cron: "32 1,4,7,10,13,16,19,22 * * *"  # 스레드 슬롯 (KST 10:30부터 3시간마다)
+    - cron: "2,32 * * * *"                    # 스레드: 30분마다 확인. 슬롯(90분 간격) 뒤 75분 안의 통과 원고만 올린다
     - cron: "12 3,10 * * *"                   # 인스타그램 (KST 12:12, 19:12)
     - cron: "40 18 1,15 * *"                  # 스레드 토큰 갱신 (매달 1일, 15일)
 
@@ -92,7 +91,7 @@ jobs:
           git config user.name "edugonggan-publisher"
           git config user.email "actions@users.noreply.github.com"
           git add -A media
-          git diff --cached --quiet || (git commit -q -m "media: $(date -u +%FT%RZ)" && git push -q)
+          git diff --cached --quiet || (git commit -q -m "media: $(date -u +%FT%RZ)" && git pull -q --rebase && git push -q)
 
       - name: 인스타그램 발행
         if: steps.plan.outputs.target == 'instagram'
