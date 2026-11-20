@@ -11,6 +11,9 @@ on:
       dry_run:
         description: "true 이면 올리지 않고 대상만 출력"
         default: "true"
+      watch_until:
+        description: "스레드 전용. 이 시각(KST, HH:MM)까지 5분마다 다시 확인한다. 비우면 한 번만"
+        default: ""
   # 예약 실행: 2026-11-20 켬(사용자 결정). 끄려면 이 블록을 주석으로 바꾸거나, 원고 저장소 맨 위에 PAUSE 파일을 둔다.
   schedule:
     - cron: "2,32 * * * *"                    # 스레드: 30분마다 확인. 슬롯(90분 간격) 뒤 75분 안의 통과 원고만 올린다
@@ -27,7 +30,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: ${{ github.event.inputs.watch_until && 350 || 40 }}
     steps:
       - name: 이 저장소 받기 (미디어 보관용)
         uses: actions/checkout@v4
@@ -127,3 +130,11 @@ jobs:
           [ -d published ] && git add -A published
           if [ -d sources ] || git ls-files --error-unmatch sources > /dev/null 2>&1; then git add -A sources || true; fi
           git diff --cached --quiet || (git commit -q -m "기록: $(date -u +%FT%RZ)" && git pull -q --rebase && git push -q)
+
+      # 예약 실행이 제때 돌지 않을 때 쓰는 임시 수단: 수동 실행 한 번으로 여러 슬롯을 덮는다(최대 5시간 30분)
+      - name: 스레드 지켜보기 (watch_until 까지 5분마다 다시 확인)
+        if: steps.plan.outputs.target == 'threads' && steps.plan.outputs.dry == '' && github.event.inputs.watch_until != ''
+        env:
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          UNTIL: ${{ github.event.inputs.watch_until }}
+        run: bash sns/tools/watch.sh "$UNTIL"
